@@ -20,7 +20,7 @@ module Redlock
       redis_timeout = options[:redis_timeout] || DEFAULT_REDIS_TIMEOUT
       @servers = servers.map do |server|
         if server.is_a?(String)
-          RedisInstance.new(url: server, timeout: redis_timeout)
+          RedisInstance.new(:url => server, :timeout => redis_timeout)
         else
           RedisInstance.new(server)
         end
@@ -37,7 +37,7 @@ module Redlock
     # +extend+: A lock ("lock_info") to extend.
     # +block+:: an optional block to be executed; after its execution, the lock (if successfully
     # acquired) is automatically unlocked.
-    def lock(resource, ttl, extend: nil, &block)
+    def lock(resource, ttl, extend = nil, &block)
       lock_info = try_lock_instances(resource, ttl, extend)
 
       if block_given?
@@ -62,84 +62,23 @@ module Redlock
     # Locks a resource, executing the received block only after successfully acquiring the lock,
     # and returning its return value as a result.
     # See Redlock::Client#lock for parameters.
-    def lock!(*args, **keyword_args)
+    def lock!(resource, ttl, extend = nil, &block)
       fail 'No block passed' unless block_given?
 
-      lock(*args, **keyword_args) do |lock_info|
-        raise LockError, 'failed to acquire lock' unless lock_info
+      lock(resource, ttl, extend) do |lock_info|
+        raise(LockError, 'failed to acquire lock') unless lock_info
         return yield
       end
     end
 
-    private
-
-    class RedisInstance
-      UNLOCK_SCRIPT = <<-eos
-        if redis.call("get",KEYS[1]) == ARGV[1] then
-          return redis.call("del",KEYS[1])
-        else
-          return 0
-        end
-      eos
-
-      # thanks to https://github.com/sbertrang/redis-distlock/blob/master/lib/Redis/DistLock.pm
-      # also https://github.com/sbertrang/redis-distlock/issues/2 which proposes the value-checking
-      # and @maltoe for https://github.com/leandromoreira/redlock-rb/pull/20#discussion_r38903633
-      LOCK_SCRIPT = <<-eos
-        if redis.call("exists", KEYS[1]) == 0 or redis.call("get", KEYS[1]) == ARGV[1] then
-          return redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
-        end
-      eos
-
-      def initialize(connection)
-        if connection.respond_to?(:client)
-          @redis = connection
-        else
-          @redis  = Redis.new(connection)
-        end
-
-        load_scripts
-      end
-
-      def lock(resource, val, ttl)
-        recover_from_script_flush do
-          @redis.evalsha @lock_script_sha, keys: [resource], argv: [val, ttl]
-        end
-      end
-
-      def unlock(resource, val)
-        recover_from_script_flush do
-          @redis.evalsha @unlock_script_sha, keys: [resource], argv: [val]
-        end
-      rescue
-        # Nothing to do, unlocking is just a best-effort attempt.
-      end
-
-      private
-
-      def load_scripts
-        @unlock_script_sha = @redis.script(:load, UNLOCK_SCRIPT)
-        @lock_script_sha = @redis.script(:load, LOCK_SCRIPT)
-      end
-
-      def recover_from_script_flush
-        retry_on_noscript = true
-        begin
-          yield
-        rescue Redis::CommandError => e
-          # When somebody has flushed the Redis instance's script cache, we might
-          # want to reload our scripts. Only attempt this once, though, to avoid
-          # going into an infinite loop.
-          if retry_on_noscript && e.message.include?('NOSCRIPT')
-            load_scripts
-            retry_on_noscript = false
-            retry
-          else
-            raise
-          end
-        end
-      end
+    def self.uuid
+      ary = SecureRandom.random_bytes(16).unpack("NnnnnN")
+      ary[2] = (ary[2] & 0x0fff) | 0x4000
+      ary[3] = (ary[3] & 0x3fff) | 0x8000
+      "%08x-%04x-%04x-%04x-%04x%08x" % ary
     end
+
+    private
 
     def try_lock_instances(resource, ttl, extend)
       @retry_count.times do
@@ -154,7 +93,7 @@ module Redlock
     end
 
     def lock_instances(resource, ttl, extend)
-      value = extend ? extend.fetch(:value) : SecureRandom.uuid
+      value = extend ? extend.fetch(:value) : Redlock::Client.uuid
 
       locked, time_elapsed = timed do
         @servers.select { |s| s.lock(resource, value, ttl) }.size
@@ -163,7 +102,7 @@ module Redlock
       validity = ttl - time_elapsed - drift(ttl)
 
       if locked >= @quorum && validity >= 0
-        { validity: validity, resource: resource, value: value }
+        { :validity => validity, :resource => resource, :value => value }
       else
         @servers.each { |s| s.unlock(resource, value) }
         false

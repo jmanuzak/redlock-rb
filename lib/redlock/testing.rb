@@ -7,9 +7,9 @@ module Redlock
     def try_lock_instances(resource, ttl, extend)
       if @testing_mode == :bypass
         {
-          validity: ttl,
-          resource: resource,
-          value: extend ? extend.fetch(:value) : SecureRandom.uuid
+          :validity => ttl,
+          :resource => resource,
+          :value => extend ? extend.fetch(:value) : Redlock::Client.uuid
         }
       elsif @testing_mode == :fail
         false

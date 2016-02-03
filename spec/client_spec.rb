@@ -9,7 +9,7 @@ RSpec.describe Redlock::Client do
 
   describe 'initialize' do
     it 'accepts both redis URLs and Redis objects' do
-      servers = [ 'redis://localhost:6379', Redis.new(url: 'redis://127.0.0.1:6379') ]
+      servers = [ 'redis://localhost:6379', Redis.new(:url => 'redis://127.0.0.1:6379') ]
       redlock = Redlock::Client.new(servers)
 
       redlock_servers = redlock.instance_variable_get(:@servers).map do |s|
@@ -38,13 +38,13 @@ RSpec.describe Redlock::Client do
 
       it 'can extend its own lock' do
         my_lock_info = lock_manager.lock(resource_key, ttl)
-        @lock_info = lock_manager.lock(resource_key, ttl, extend: my_lock_info)
+        @lock_info = lock_manager.lock(resource_key, ttl, extend = my_lock_info)
         expect(@lock_info).to be_lock_info_for(resource_key)
         expect(@lock_info[:value]).to eq(my_lock_info[:value])
       end
 
       it "sets the given value when trying to extend a non-existent lock" do
-        @lock_info = lock_manager.lock(resource_key, ttl, extend: {value: 'hello world'})
+        @lock_info = lock_manager.lock(resource_key, ttl, extend = {:value => 'hello world'})
         expect(@lock_info).to be_lock_info_for(resource_key)
         expect(@lock_info[:value]).to eq('hello world') # really we should test what's in redis
       end
@@ -67,8 +67,8 @@ RSpec.describe Redlock::Client do
       end
 
       it "can't extend somebody else's lock" do
-        yet_another_lock_info = @another_lock_info.merge value: 'gibberish'
-        lock_info = lock_manager.lock(resource_key, ttl, extend: yet_another_lock_info)
+        yet_another_lock_info = @another_lock_info.merge :value => 'gibberish'
+        lock_info = lock_manager.lock(resource_key, ttl, extend = yet_another_lock_info)
         expect(lock_info).to eql(false)
       end
     end

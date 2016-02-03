@@ -1,6 +1,7 @@
 require 'spec_helper'
 require 'securerandom'
 
+require 'redlock/redis_instance'
 require 'redlock/testing'
 
 RSpec.describe Redlock::Client do
